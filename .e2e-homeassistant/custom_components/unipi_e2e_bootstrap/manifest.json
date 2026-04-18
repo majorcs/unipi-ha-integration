@@ -1,0 +1,9 @@
+{
+  "domain": "unipi_e2e_bootstrap",
+  "name": "UniPi E2E Bootstrap",
+  "version": "2026.4.18.1",
+  "documentation": "https://github.com/majorcs/unipi-ha-integration",
+  "issue_tracker": "https://github.com/majorcs/unipi-ha-integration/issues",
+  "codeowners": ["@majorcs"],
+  "requirements": []
+}

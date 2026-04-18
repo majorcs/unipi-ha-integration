@@ -1,0 +1,19 @@
+.claude/
+.coverage
+.pytest_cache/
+.venv/
+.venv-e2e-ha/
+*.py[cod]
+**/__pycache__/
+
+# Local Home Assistant E2E runtime state
+.e2e-homeassistant/*
+!.e2e-homeassistant/configuration.yaml
+!.e2e-homeassistant/custom_components/
+.e2e-homeassistant/custom_components/*
+!.e2e-homeassistant/custom_components/unipi_e2e_bootstrap/
+!.e2e-homeassistant/custom_components/unipi_e2e_bootstrap/__init__.py
+!.e2e-homeassistant/custom_components/unipi_e2e_bootstrap/manifest.json
+
+# AI planning / workspace helper files
+plan-unipiHaIntegration.prompt.md

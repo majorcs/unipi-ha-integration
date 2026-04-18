@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to UniPi EVOK",
+        "description": "Enter the EVOK host details for your UniPi device.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the EVOK API."
+    },
+    "abort": {
+      "already_configured": "This UniPi device is already configured."
+    }
+  }
+}
