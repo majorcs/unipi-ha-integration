@@ -71,6 +71,57 @@ _SAMPLE_INVENTORY: list[dict[str, Any]] = [
     },
 ]
 
+_LEGACY_SAMPLE_INVENTORY: list[dict[str, Any]] = [
+    {
+        "dev": "neuron",
+        "model": "M205",
+        "sn": 31,
+        "board_count": 2,
+        "circuit": "1",
+    },
+    {
+        "dev": "relay",
+        "circuit": "2_11",
+        "value": 0,
+        "pending": False,
+        "mode": "Simple",
+        "modes": ["Simple"],
+    },
+    {
+        "dev": "input",
+        "circuit": "2_11",
+        "value": 1,
+        "debounce": 50,
+        "counter": 0,
+        "counter_mode": "Enabled",
+        "mode": "Simple",
+        "modes": ["Simple", "DirectSwitch"],
+    },
+    {
+        "dev": "led",
+        "circuit": "1_01",
+        "value": 0,
+    },
+    {
+        "dev": "ai",
+        "circuit": "1_01",
+        "value": 0.0078,
+        "unit": "V",
+        "mode": "Voltage",
+        "modes": ["Voltage", "Current"],
+        "range_modes": ["10.0"],
+        "range": "10.0",
+    },
+    {
+        "dev": "ao",
+        "circuit": "1_01",
+        "value": 0.0,
+        "mode": "Voltage",
+        "modes": ["Voltage", "Current", "Resistance"],
+        "unit": "V",
+    },
+]
+
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
@@ -87,6 +138,18 @@ def sample_inventory() -> list[dict[str, Any]]:
 def sample_metadata(sample_inventory):
     """Return normalized metadata from the sample device_info item."""
     return _metadata_from_raw(sample_inventory[0])
+
+
+@pytest.fixture
+def legacy_inventory() -> list[dict[str, Any]]:
+    """Return a fresh legacy EVOK inventory payload."""
+    return deepcopy(_LEGACY_SAMPLE_INVENTORY)
+
+
+@pytest.fixture
+def legacy_metadata(legacy_inventory):
+    """Return normalized metadata from the legacy device metadata item."""
+    return _metadata_from_raw(legacy_inventory[0])
 
 
 class FakeHub:

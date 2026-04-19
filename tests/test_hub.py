@@ -37,6 +37,19 @@ async def test_async_probe_unipi_reads_device_info(hass, aioclient_mock, sample_
 
 
 @pytest.mark.asyncio
+async def test_async_probe_unipi_reads_legacy_device_info(hass, aioclient_mock, legacy_inventory) -> None:
+    """Config flow probing should support pre-3.0.1 EVOK payloads."""
+    aioclient_mock.get("http://192.168.1.50:8080/rest/all", json=legacy_inventory)
+
+    result = await async_probe_unipi(async_get_clientsession(hass), "192.168.1.50", 8080)
+
+    assert result.title == "Neuron M205 (SN 31)"
+    assert result.unique_id == "neuron-m205-31"
+    assert result.metadata.model == "M205"
+    assert result.metadata.serial_number == "31"
+
+
+@pytest.mark.asyncio
 async def test_async_probe_unipi_rejects_invalid_inventory(hass, aioclient_mock) -> None:
     """Probing should fail if EVOK returns an invalid payload."""
     aioclient_mock.get("http://192.168.1.11:8080/rest/all", json={"unexpected": True})
@@ -187,6 +200,39 @@ async def test_async_set_value_falls_back_to_followup_get(hass, sample_inventory
 
     assert request_mock.await_count == 2
     assert hub.get_item("ro:1_01").value == 1
+
+
+@pytest.mark.asyncio
+async def test_async_set_value_uses_legacy_write_endpoint(hass, legacy_inventory) -> None:
+    """Legacy relay/input aliases should use the old EVOK write endpoint names."""
+    hub = UniPiHub(hass, Mock(), "192.168.1.50", 8080)
+    hub._ingest_inventory(legacy_inventory)
+
+    with patch(
+        "custom_components.unipi.hub._async_request_json",
+        AsyncMock(side_effect=[{"success": True}, {"dev": "relay", "circuit": "2_11", "value": 1}]),
+    ) as request_mock:
+        await hub.async_set_value("ro", "2_11", 1)
+
+    assert request_mock.await_args_list[0].args[2] == "http://192.168.1.50:8080/rest/relay/2_11"
+    assert hub.get_item("ro:2_11").value == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_websocket_message_updates_cache_and_notifies(hass, legacy_inventory) -> None:
+    """Legacy websocket payloads should normalize old EVOK device names."""
+    hub = UniPiHub(hass, Mock(), "192.168.1.50", 8080)
+    hub._ingest_inventory(legacy_inventory)
+
+    callback = Mock()
+    hub.async_add_listener("ro:2_11", callback)
+
+    await hub._handle_websocket_message(
+        SimpleNamespace(type=WSMsgType.TEXT, data=json.dumps([{"dev": "relay", "circuit": "2_11", "value": 1}]))
+    )
+
+    assert hub.get_item("ro:2_11").value == 1
+    callback.assert_called_once()
 
 
 def test_async_add_listener_remove_is_idempotent(hass, sample_inventory) -> None:

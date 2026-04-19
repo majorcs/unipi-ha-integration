@@ -18,12 +18,19 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
     DEFAULT_PORT,
-    DEVICE_TYPE_TO_PLATFORM,
     DOMAIN,
     MANUFACTURER,
-    WRITABLE_DEVICE_TYPES,
 )
 from .models import UniPiDeviceMetadata, UniPiEntityDescription
+from .protocol import (
+    EVOKProtocolAdapter,
+    EVOKV3ProtocolAdapter,
+    _build_entity_name,
+    _string_or_none,
+    detect_evok_protocol,
+    normalize_item_from_raw,
+    normalize_metadata_from_raw,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,6 +67,7 @@ class UniPiHub:
         self.websocket_url = f"ws://{host}:{port}/ws"
         self._items: dict[str, UniPiEntityDescription] = {}
         self._metadata = UniPiDeviceMetadata()
+        self._protocol: EVOKProtocolAdapter = EVOKV3ProtocolAdapter()
         self._listeners: dict[str, set[Callable[[], None]]] = defaultdict(set)
         self._ws_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -135,7 +143,8 @@ class UniPiHub:
 
     async def async_set_value(self, dev: str, circuit: str, value: Any) -> None:
         """Write a value to an EVOK endpoint and update local state from the response."""
-        url = f"{self.base_url}/rest/{dev}/{circuit}"
+        write_dev = self._protocol.write_dev(dev)
+        url = f"{self.base_url}/rest/{write_dev}/{circuit}"
         payload = {"value": _serialize_value(value)}
         response = await _async_request_json(self._session, "POST", url, data=payload)
 
@@ -174,15 +183,17 @@ class UniPiHub:
     @callback
     def _ingest_inventory(self, payload: Iterable[dict[str, Any]]) -> None:
         """Normalize EVOK payloads into cached device and entity state."""
+        payload_items = tuple(payload)
+        self._protocol = detect_evok_protocol(payload_items, fallback=self._protocol)
+
         changed_keys: set[str] = set()
 
-        for raw_item in payload:
-            dev = str(raw_item.get("dev", ""))
-            if dev == "device_info":
-                self._metadata = _metadata_from_raw(raw_item)
+        for raw_item in payload_items:
+            if self._protocol.is_metadata_item(raw_item):
+                self._metadata = self._protocol.normalize_metadata(raw_item)
                 continue
 
-            item = _normalize_item(raw_item)
+            item = self._protocol.normalize_item(raw_item)
             if item is None:
                 continue
 
@@ -267,10 +278,8 @@ async def async_probe_unipi(
     if not isinstance(inventory, list):
         raise UniPiConnectionError("invalid_inventory")
 
-    metadata = next(
-        (_metadata_from_raw(item) for item in inventory if item.get("dev") == "device_info"),
-        None,
-    )
+    protocol = detect_evok_protocol(inventory)
+    metadata = protocol.extract_metadata(inventory)
     if metadata is None:
         raise UniPiConnectionError("device_info_missing")
 
@@ -310,70 +319,9 @@ def _serialize_value(value: Any) -> str:
 
 def _metadata_from_raw(raw_item: dict[str, Any]) -> UniPiDeviceMetadata:
     """Create normalized device metadata from EVOK device_info."""
-    serial_number = raw_item.get("sn")
-    return UniPiDeviceMetadata(
-        family=_string_or_none(raw_item.get("family")),
-        model=_string_or_none(raw_item.get("model")),
-        serial_number=str(serial_number) if serial_number is not None else None,
-        circuit=_string_or_none(raw_item.get("circuit")),
-        board_count=int(raw_item["board_count"]) if raw_item.get("board_count") is not None else None,
-    )
+    return normalize_metadata_from_raw(raw_item)
 
 
 def _normalize_item(raw_item: dict[str, Any]) -> UniPiEntityDescription | None:
     """Normalize a supported EVOK item into a Home Assistant entity description."""
-    dev = _string_or_none(raw_item.get("dev"))
-    circuit = _string_or_none(raw_item.get("circuit"))
-    if dev is None or circuit is None:
-        return None
-
-    platform = DEVICE_TYPE_TO_PLATFORM.get(dev)
-    if platform is None:
-        return None
-
-    item_range = raw_item.get("range")
-    value_range: tuple[float, float] | None = None
-    if isinstance(item_range, list) and len(item_range) == 2:
-        value_range = (float(item_range[0]), float(item_range[1]))
-
-    if dev == "ao":
-        value_range = (0.0, 10.0)
-        raw_item = {**raw_item, "unit": raw_item.get("unit") or "V"}
-
-    return UniPiEntityDescription(
-        key=f"{dev}:{circuit}",
-        platform=platform,
-        dev=dev,
-        circuit=circuit,
-        name=_build_entity_name(dev, circuit),
-        value=raw_item.get("value"),
-        unit=_string_or_none(raw_item.get("unit")),
-        unit_of_measurement=_string_or_none(raw_item.get("unit")),
-        suggested_unit_of_measurement=_string_or_none(raw_item.get("unit")),
-        mode=_string_or_none(raw_item.get("mode")),
-        modes=raw_item.get("modes"),
-        value_range=value_range,
-        writable=dev in WRITABLE_DEVICE_TYPES,
-        raw=dict(raw_item),
-    )
-
-
-def _build_entity_name(dev: str, circuit: str) -> str:
-    """Return a human readable entity name."""
-    labels = {
-        "ro": "Relay",
-        "do": "Digital Output",
-        "di": "Digital Input",
-        "led": "LED",
-        "ai": "Analog Input",
-        "ao": "Analog Output",
-    }
-    return f"{labels.get(dev, dev.upper())} {circuit.replace('_', '.')}"
-
-
-def _string_or_none(value: Any) -> str | None:
-    """Return a stripped string or None."""
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+    return normalize_item_from_raw(raw_item)
