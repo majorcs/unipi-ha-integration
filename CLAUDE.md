@@ -28,7 +28,7 @@ Local end-to-end validation against a real/dedicated Home Assistant instance:
 - A bootstrap helper (`.e2e-homeassistant/custom_components/unipi_e2e_bootstrap/`) auto-creates a `unipi` config entry from `.e2e-homeassistant/configuration.yaml` after HA finishes starting.
 - The script prompts to kill an already-running instance for the same config dir; it refuses to do so non-interactively.
 
-No CI workflow or linter config exists yet in this repo — don't assume a `lint` command is available.
+CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR: `test` (pytest with the 90% coverage gate), `hassfest`, and `hacs` validation. All three are required status checks on `main` — no lint job exists, so don't assume a `lint` command is available. `main` is branch-protected: changes land via PR with those checks green (no required reviewer, since this is a solo project).
 
 ## Architecture
 
