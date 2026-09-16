@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/majorcs/unipi-ha-integration/issues",
   "loggers": ["custom_components.unipi"],
   "requirements": [],
-  "version": "2026.4.19.1"
+  "version": "2026.9.16.1"
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +10,13 @@ from typing import Any
 from .const import DEFAULT_NUMBER_MAX, DEFAULT_NUMBER_MIN, DEVICE_TYPE_TO_PLATFORM, WRITABLE_DEVICE_TYPES
 from .models import UniPiDeviceMetadata, UniPiEntityDescription
 
+_LOGGER = logging.getLogger(__name__)
+
+# NOTE: "relay" -> "ro" and "input" -> "di" have been observed on real pre-3.0.1
+# firmware (see DEVICE_COMPATIBILITY_PRE_V3_FIRMWARE.md). "output" -> "do" has
+# NOT been observed on any pre-v3 device inventory to date; it is a best-effort
+# guess pending confirmation from real legacy hardware that exposes digital
+# outputs.
 LEGACY_DEVICE_ALIASES: dict[str, str] = {
     "relay": "ro",
     "output": "do",
@@ -71,11 +79,14 @@ class EVOKProtocolAdapter:
             return None
 
         dev = self.canonical_dev(raw_dev)
-        if dev is None or dev == self.metadata_dev:
+        if dev == self.metadata_dev:
             return None
 
         platform = DEVICE_TYPE_TO_PLATFORM.get(dev)
         if platform is None:
+            _LOGGER.debug(
+                "Ignoring unsupported EVOK device type %r for circuit %r", dev, circuit
+            )
             return None
 
         value_range = self._normalize_range(raw_item)

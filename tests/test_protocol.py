@@ -53,3 +53,10 @@ def test_metadata_wrapper_normalizes_legacy_payload() -> None:
 
     assert metadata.family == "Neuron"
     assert metadata.title == "Neuron M205 (SN 31)"
+
+
+def test_detect_protocol_defaults_to_v3_for_ambiguous_standalone_ao_item() -> None:
+    """A lone 'ao' item with no range/dict-modes signal and no fallback defaults to V3."""
+    adapter = detect_evok_protocol([{"dev": "ao", "circuit": "1_01", "value": 0.0, "unit": "V"}])
+
+    assert isinstance(adapter, EVOKV3ProtocolAdapter)

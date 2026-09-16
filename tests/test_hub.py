@@ -17,10 +17,9 @@ from custom_components.unipi.hub import (
     UniPiConnectionError,
     UniPiHub,
     _async_request_json,
-    _build_entity_name,
-    _string_or_none,
     async_probe_unipi,
 )
+from custom_components.unipi.protocol import _build_entity_name, _string_or_none
 
 
 @pytest.mark.asyncio
@@ -63,7 +62,7 @@ async def test_async_set_value_updates_cached_item(hass, aioclient_mock, sample_
     """POST writes should refresh the cached entity state."""
     session = async_get_clientsession(hass)
     hub = UniPiHub(hass, session, "192.168.1.10", 8080)
-    hub._ingest_inventory(sample_inventory)
+    hub._ingest_inventory(sample_inventory, detect_protocol=True)
 
     aioclient_mock.post(
         "http://192.168.1.10:8080/rest/ao/1_01",
@@ -92,7 +91,8 @@ async def test_websocket_message_updates_cache_and_notifies(hass) -> None:
         [
             {"dev": "device_info", "family": "Neuron", "model": "L203", "sn": 167, "circuit": "L203"},
             {"dev": "led", "circuit": "1_01", "value": 0},
-        ]
+        ],
+        detect_protocol=True,
     )
 
     callback = Mock()
@@ -120,7 +120,7 @@ def test_get_items_for_platform_filters_expected_entities(hass, sample_inventory
     """Platform filtering should return only matching cached entities."""
     session = Mock()
     hub = UniPiHub(hass, session, "192.168.1.10", 8080)
-    hub._ingest_inventory(sample_inventory)
+    hub._ingest_inventory(sample_inventory, detect_protocol=True)
 
     switch_items = hub.get_items_for_platform(hub.get_item("ro:1_01").platform)
 
@@ -190,7 +190,7 @@ async def test_async_fetch_inventory_rejects_non_list(hass) -> None:
 async def test_async_set_value_falls_back_to_followup_get(hass, sample_inventory) -> None:
     """Writes should refresh state with GET if POST does not return a result payload."""
     hub = UniPiHub(hass, Mock(), "192.168.1.10", 8080)
-    hub._ingest_inventory(sample_inventory)
+    hub._ingest_inventory(sample_inventory, detect_protocol=True)
 
     with patch(
         "custom_components.unipi.hub._async_request_json",
@@ -206,7 +206,7 @@ async def test_async_set_value_falls_back_to_followup_get(hass, sample_inventory
 async def test_async_set_value_uses_legacy_write_endpoint(hass, legacy_inventory) -> None:
     """Legacy relay/input aliases should use the old EVOK write endpoint names."""
     hub = UniPiHub(hass, Mock(), "192.168.1.50", 8080)
-    hub._ingest_inventory(legacy_inventory)
+    hub._ingest_inventory(legacy_inventory, detect_protocol=True)
 
     with patch(
         "custom_components.unipi.hub._async_request_json",
@@ -222,7 +222,7 @@ async def test_async_set_value_uses_legacy_write_endpoint(hass, legacy_inventory
 async def test_legacy_websocket_message_updates_cache_and_notifies(hass, legacy_inventory) -> None:
     """Legacy websocket payloads should normalize old EVOK device names."""
     hub = UniPiHub(hass, Mock(), "192.168.1.50", 8080)
-    hub._ingest_inventory(legacy_inventory)
+    hub._ingest_inventory(legacy_inventory, detect_protocol=True)
 
     callback = Mock()
     hub.async_add_listener("ro:2_11", callback)
@@ -238,7 +238,7 @@ async def test_legacy_websocket_message_updates_cache_and_notifies(hass, legacy_
 def test_async_add_listener_remove_is_idempotent(hass, sample_inventory) -> None:
     """Listener removal should be safe even if called more than once."""
     hub = UniPiHub(hass, Mock(), "192.168.1.10", 8080)
-    hub._ingest_inventory(sample_inventory)
+    hub._ingest_inventory(sample_inventory, detect_protocol=True)
     callback = Mock()
 
     remove = hub.async_add_listener("ro:1_01", callback)
@@ -282,7 +282,8 @@ async def test_websocket_loop_processes_message_and_disconnects_cleanly(hass) ->
         [
             {"dev": "device_info", "family": "Neuron", "model": "L203", "sn": 167, "circuit": "L203"},
             {"dev": "led", "circuit": "1_01", "value": 0},
-        ]
+        ],
+        detect_protocol=True,
     )
     session.ws_connect.return_value = FakeWebSocket(hub)
 

@@ -25,8 +25,6 @@ from .models import UniPiDeviceMetadata, UniPiEntityDescription
 from .protocol import (
     EVOKProtocolAdapter,
     EVOKV3ProtocolAdapter,
-    _build_entity_name,
-    _string_or_none,
     detect_evok_protocol,
     normalize_item_from_raw,
     normalize_metadata_from_raw,
@@ -105,7 +103,7 @@ class UniPiHub:
     async def async_initialize(self) -> None:
         """Fetch inventory and establish the websocket connection."""
         inventory = await self.async_fetch_inventory()
-        self._ingest_inventory(inventory)
+        self._ingest_inventory(inventory, detect_protocol=True)
 
         self._stop_event.clear()
         self._connected_event.clear()
@@ -181,10 +179,20 @@ class UniPiHub:
         return _remove
 
     @callback
-    def _ingest_inventory(self, payload: Iterable[dict[str, Any]]) -> None:
-        """Normalize EVOK payloads into cached device and entity state."""
+    def _ingest_inventory(
+        self, payload: Iterable[dict[str, Any]], *, detect_protocol: bool = False
+    ) -> None:
+        """Normalize EVOK payloads into cached device and entity state.
+
+        Protocol generation is only (re-)detected from a full inventory fetch
+        (`detect_protocol=True`). Partial payloads, such as single-item
+        websocket pushes or write-response refreshes, reuse the
+        already-detected protocol instead of being reclassified item by item,
+        so a single stray/legacy-looking key can't flip live protocol state.
+        """
         payload_items = tuple(payload)
-        self._protocol = detect_evok_protocol(payload_items, fallback=self._protocol)
+        if detect_protocol:
+            self._protocol = detect_evok_protocol(payload_items, fallback=self._protocol)
 
         changed_keys: set[str] = set()
 

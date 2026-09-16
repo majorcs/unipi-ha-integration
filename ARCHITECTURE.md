@@ -4,18 +4,19 @@
 
 This document captures the implemented technical architecture of the `unipi` Home Assistant custom integration as it exists in the repository today.
 
-It is intended to serve as the missing design record that would normally be produced before implementation. It describes:
+It serves as the design and implementation record for the current codebase. It describes:
 
 - design goals and constraints
 - runtime architecture
 - EVOK protocol usage
+- automatic protocol compatibility strategy
 - Home Assistant integration structure
 - entity modeling and platform mapping
 - write/control flow
 - reconnect and lifecycle behavior
-- test architecture
+- testing architecture
 - end-to-end validation environment
-- current limitations and next-step design opportunities
+- current limitations and future evolution points
 
 ---
 
@@ -33,6 +34,7 @@ The implementation was built around these concrete goals:
 8. Package the repository in a HACS-compatible structure.
 9. Maintain high automated test coverage.
 10. Provide a working local end-to-end Home Assistant environment for manual validation.
+11. Automatically support both EVOK `3.0.1+` and pre-`3.0.1` payload schemas.
 
 ---
 
@@ -43,12 +45,18 @@ Primary references:
 - Home Assistant integration docs: https://developers.home-assistant.io/docs/creating_component_index/
 - EVOK WebSocket docs: https://evok.readthedocs.io/en/stable/apis/websocket/
 - EVOK API reference: https://unipitechnology.stoplight.io/docs/evok/qwveyanfg1gys-evok
+- EVOK releases / changelog: https://github.com/UniPiTechnology/evok/releases
 - HACS publishing docs: https://www.hacs.xyz/docs/publish/integration/
 - Home Assistant brand image docs: https://developers.home-assistant.io/docs/core/integration/brand_images
 
-Live verification target used during implementation:
+Relevant changelog information:
 
-- `http://192.168.88.59:8080`
+- EVOK `3.0.1` introduced breaking API changes.
+- Relays moved to `ro` while alternate access via `relay` remained available.
+- Digital outputs moved to `do` while alternate access via `output` remained available.
+- Digital inputs moved to `di` while alternate access via `input` remained available.
+
+These API changes are the basis for the implemented compatibility layer.
 
 ---
 
@@ -61,6 +69,7 @@ The runtime integration is implemented under `custom_components/unipi/`:
 - `__init__.py` — config entry setup and unload
 - `config_flow.py` — host/port onboarding and validation
 - `const.py` — constants, platform map, numeric defaults
+- `protocol.py` — EVOK schema detection and compatibility normalization
 - `hub.py` — EVOK client/hub, discovery, state cache, websocket loop, writes
 - `models.py` — normalized device and entity data models
 - `entity.py` — shared base entity class
@@ -71,7 +80,7 @@ The runtime integration is implemented under `custom_components/unipi/`:
 - `number.py` — analog outputs
 - `manifest.json` — Home Assistant integration metadata
 - `strings.json` and `translations/en.json` — config flow UI strings
-- `brand/` — local brand assets for Home Assistant 2026.3+
+- `brand/` — local brand assets for Home Assistant custom integration branding
 
 ### 4.2 Packaging and project files
 
@@ -82,6 +91,7 @@ At repository root:
 - `pytest.ini` — coverage and test configuration
 - `requirements_test.txt` — test dependencies
 - `ARCHITECTURE.md` — this document
+- `DEVICE_COMPATIBILITY_PRE_V3_FIRMWARE.md` — local compatibility notes for legacy EVOK schema devices
 
 ### 4.3 E2E validation files
 
@@ -96,11 +106,11 @@ Local Home Assistant end-to-end environment:
 
 ## 5. Runtime architecture overview
 
-The implemented runtime architecture is intentionally simple and centered around one in-memory runtime object per config entry.
+The runtime architecture is centered around one in-memory runtime hub per config entry.
 
 ### 5.1 Architectural layers
 
-The integration is divided into four layers:
+The integration is divided into five layers:
 
 1. **Home Assistant entry layer**
    - creates and stores one runtime hub per config entry
@@ -110,17 +120,24 @@ The integration is divided into four layers:
 2. **Config flow layer**
    - collects host and port
    - probes EVOK using HTTP
+   - auto-detects current vs legacy EVOK schema
    - extracts stable metadata
    - blocks duplicate devices by unique ID
 
-3. **EVOK runtime hub layer**
+3. **Protocol compatibility layer**
+   - detects whether the device uses EVOK `3.0.1+` or pre-`3.0.1` payloads
+   - normalizes legacy metadata and entity names into canonical internal names
+   - maps canonical writes back to the correct EVOK endpoint names
+   - isolates protocol differences from Home Assistant entity code
+
+4. **EVOK runtime hub layer**
    - fetches full inventory from `/rest/all`
    - normalizes raw EVOK payloads into internal descriptions
    - opens and maintains `ws://host:port/ws`
    - distributes updates to registered entity listeners
    - exposes write methods using EVOK REST `POST`
 
-4. **Entity/platform layer**
+5. **Entity/platform layer**
    - dynamically creates entities from discovered inventory
    - uses cached state from the hub
    - writes changes back through the hub
@@ -133,6 +150,7 @@ Each UniPi config entry gets its own:
 - `UniPiHub`
 - EVOK HTTP base URL
 - EVOK WebSocket connection
+- active protocol adapter
 - in-memory entity cache
 - reconnect loop
 - listener registry
@@ -175,7 +193,7 @@ Implemented in `custom_components/unipi/config_flow.py`.
 
 ### 7.1 User inputs
 
-The current flow asks for:
+The flow asks for:
 
 - `host`
 - `port` (default `8080`)
@@ -188,10 +206,13 @@ The probe logic:
 
 1. Performs `GET http://{host}:{port}/rest/all`
 2. Verifies the response is a JSON list
-3. Extracts the `device_info` object
-4. Converts `device_info` into normalized `UniPiDeviceMetadata`
-5. Builds a stable unique ID
-6. Returns a `UniPiProbeResult`
+3. Detects whether the payload matches EVOK `3.0.1+` or pre-`3.0.1`
+4. Extracts metadata from either:
+   - `device_info` on EVOK `3.0.1+`
+   - `neuron` on pre-`3.0.1`
+5. Converts that metadata into normalized `UniPiDeviceMetadata`
+6. Builds a stable unique ID
+7. Returns a `UniPiProbeResult`
 
 ### 7.3 Unique ID strategy
 
@@ -203,9 +224,10 @@ Fallback unique ID:
 
 - `host:port`
 
-For the validated live device, the current unique ID pattern becomes:
+Examples:
 
 - `neuron-l203-167`
+- `neuron-m205-31`
 
 ### 7.4 Config entry data stored
 
@@ -216,24 +238,116 @@ The config flow currently stores:
 - `device_uid`
 - `model`
 
-The entry title is the EVOK-discovered device title, currently based on the `device_info` family plus model when available, with fallback to circuit or model.
-When a serial number is available, it is appended to the default title to avoid collisions between same-model devices, for example `Neuron L203 (SN 167)`.
+The entry title is the EVOK-discovered device title, based on family plus model when available, with fallback to circuit or model.
+
+When a serial number is available, it is appended to the default title to avoid collisions between same-model devices.
+
+Examples:
+
+- `Neuron L203 (SN 167)`
+- `Neuron M205 (SN 31)`
 
 ---
 
-## 8. EVOK protocol architecture
+## 8. Protocol compatibility architecture
 
-## 8.1 HTTP usage
+Implemented in `custom_components/unipi/protocol.py`.
+
+### 8.1 Motivation
+
+EVOK `3.0.1` introduced breaking API changes and new canonical endpoint names. Older firmware still uses pre-v3 naming.
+
+Without an explicit compatibility layer, the integration would either:
+
+- fail during probe due to missing `device_info`, or
+- ignore legacy entities due to unmatched EVOK type names
+
+### 8.2 Detection strategy
+
+The integration auto-detects protocol generation from inventory payload contents.
+
+Current-schema indicators:
+
+- `device_info`
+- `ro`
+- `do`
+- `di`
+- dict-based analog `modes`
+
+Legacy-schema indicators:
+
+- `neuron`
+- `relay`
+- `output`
+- `input`
+- string-based analog `range`
+- `range_modes`
+
+Detection runs:
+
+- during config flow probe
+- during hub inventory ingestion
+
+### 8.3 Canonical internal model
+
+Both EVOK generations are normalized into one canonical internal model.
+
+Canonical internal device types remain:
+
+- `ro`
+- `do`
+- `di`
+- `led`
+- `ai`
+- `ao`
+
+This keeps Home Assistant entity code independent of device firmware generation.
+
+### 8.4 Legacy alias mapping
+
+Pre-v3 firmware payloads are normalized as follows:
+
+| Legacy EVOK type | Canonical internal type |
+|---|---|
+| `neuron` | metadata record |
+| `relay` | `ro` |
+| `output` | `do` |
+| `input` | `di` |
+
+### 8.5 Legacy write mapping
+
+When a legacy device is detected, canonical writes are mapped back to the correct legacy endpoint names:
+
+| Canonical write type | Legacy EVOK endpoint |
+|---|---|
+| `ro` | `relay` |
+| `do` | `output` |
+| `di` | `input` |
+
+### 8.6 Legacy analog normalization
+
+The compatibility layer also tolerates older analog schema differences:
+
+- `range` may be a string such as `"10.0"` instead of a two-item list
+- `modes` may be a list of strings instead of a dict with metadata
+
+This is sufficient for current entity creation and basic range handling.
+
+---
+
+## 9. EVOK protocol architecture
+
+### 9.1 HTTP usage
 
 The implementation currently uses EVOK REST for:
 
-### Discovery
+#### Discovery
 
 - `GET /rest/all`
 
 This endpoint is treated as the authoritative discovery source during startup.
 
-### Writes
+#### Writes
 
 - `POST /rest/{dev}/{circuit}` with form field `value`
 
@@ -242,7 +356,9 @@ Example write patterns used by the integration:
 - relay / digital output / LED: `0` or `1`
 - analog output: float value serialized into string form
 
-### Post-write refresh behavior
+For legacy devices, canonical writes are translated automatically to legacy endpoint names before the POST is performed.
+
+#### Post-write refresh behavior
 
 `UniPiHub.async_set_value()` uses this logic:
 
@@ -252,20 +368,21 @@ Example write patterns used by the integration:
 
 This design allows support for both richer and simpler EVOK responses.
 
-## 8.2 WebSocket usage
+### 9.2 WebSocket usage
 
 The implementation uses:
 
 - `ws://{host}:{port}/ws`
 
-### WebSocket assumptions currently encoded
+#### WebSocket assumptions currently encoded
 
 - EVOK pushes state changes to connected clients
 - messages may be a JSON object or a JSON array of objects
 - only dict payloads are ingested
 - malformed JSON is ignored and logged at debug level
+- legacy websocket payloads are normalized through the same compatibility layer as HTTP inventory payloads
 
-### Reconnect behavior
+#### Reconnect behavior
 
 The websocket loop uses a bounded exponential backoff:
 
@@ -274,7 +391,7 @@ The websocket loop uses a bounded exponential backoff:
 - capped at `30s`
 - reset to `1s` after successful connection
 
-### Connection readiness behavior
+#### Connection readiness behavior
 
 `async_initialize()` waits until the WebSocket loop marks the connection ready using `_connected_event`.
 
@@ -282,13 +399,13 @@ If readiness is not achieved within `10s`, initialization fails with `UniPiConne
 
 ---
 
-## 9. Data model design
+## 10. Data model design
 
 Implemented in `custom_components/unipi/models.py`.
 
-### 9.1 `UniPiDeviceMetadata`
+### 10.1 `UniPiDeviceMetadata`
 
-Represents normalized EVOK `device_info` data.
+Represents normalized EVOK metadata.
 
 Fields:
 
@@ -303,7 +420,7 @@ Responsibilities:
 - derive display title via `title`
 - derive stable unique ID via `unique_id(host, port)`
 
-### 9.2 `UniPiEntityDescription`
+### 10.2 `UniPiEntityDescription`
 
 Represents one supported EVOK item normalized for Home Assistant use.
 
@@ -322,7 +439,7 @@ Core fields:
 - `writable`
 - `raw`
 
-Home Assistant compatibility fields added during runtime hardening:
+Home Assistant compatibility fields include:
 
 - `unit_of_measurement`
 - `suggested_unit_of_measurement`
@@ -338,9 +455,7 @@ Home Assistant compatibility fields added during runtime hardening:
 - `translation_key`
 - `suggested_display_precision`
 
-These fields were added because Home Assistant entity platforms access description attributes generically during registration.
-
-### 9.3 Numeric range policy
+### 10.3 Numeric range policy
 
 For analog outputs (`ao`):
 
@@ -353,15 +468,15 @@ This is an explicit project decision reflected in both runtime code and tests.
 
 ---
 
-## 10. Entity discovery and normalization
+## 11. Entity discovery and normalization
 
-Implemented mainly in `_normalize_item()` inside `custom_components/unipi/hub.py`.
+Implemented through the protocol compatibility layer and consumed by `UniPiHub`.
 
-### 10.1 Supported EVOK device types
+### 11.1 Supported EVOK device types
 
-Current mapping from EVOK `dev` to Home Assistant platform:
+Current mapping from canonical EVOK type to Home Assistant platform:
 
-| EVOK `dev` | Meaning | HA platform |
+| Canonical type | Meaning | HA platform |
 |---|---|---|
 | `ro` | relay output | `switch` |
 | `do` | digital output | `switch` |
@@ -370,21 +485,30 @@ Current mapping from EVOK `dev` to Home Assistant platform:
 | `ai` | analog input | `sensor` |
 | `ao` | analog output | `number` |
 
-### 10.2 Ignored EVOK types
+Legacy EVOK aliases are also accepted automatically:
 
-The normalization layer ignores types not present in `DEVICE_TYPE_TO_PLATFORM`.
+| Legacy EVOK `dev` | Canonical type | HA platform |
+|---|---|---|
+| `relay` | `ro` | `switch` |
+| `output` | `do` | `switch` |
+| `input` | `di` | `binary_sensor` |
 
-Observed unsupported live-device EVOK types included:
+### 11.2 Ignored EVOK types
+
+The normalization layer ignores types not present in the canonical mapping.
+
+Observed unsupported EVOK types include:
 
 - `wd`
 - `modbus_slave`
 - `owpower`
 - `owbus`
-- `device_info` (handled separately as metadata)
+- `uart`
+- metadata records (`device_info` and `neuron`) which are handled separately
 
-### 10.3 Naming strategy
+### 11.3 Naming strategy
 
-Human-readable names are generated from EVOK type plus circuit.
+Human-readable entity names are generated from canonical EVOK type plus circuit.
 
 Examples:
 
@@ -393,15 +517,7 @@ Examples:
 - `LED 1.03`
 - `Analog Output 1.01`
 
-Home Assistant then derives entity IDs such as:
-
-- `switch.l203_relay_2_01`
-- `binary_sensor.l203_digital_input_2_01`
-- `light.l203_led_1_01`
-- `sensor.l203_analog_input_1_01`
-- `number.l203_analog_output_1_01`
-
-### 10.4 Unique entity ID strategy
+### 11.4 Unique entity ID strategy
 
 Entity unique IDs are composed as:
 
@@ -415,9 +531,9 @@ This keeps entity IDs stable across Home Assistant restarts as long as the devic
 
 ---
 
-## 11. Platform-specific design
+## 12. Platform-specific design
 
-## 11.1 Shared base entity
+### 12.1 Shared base entity
 
 Implemented in `custom_components/unipi/entity.py`.
 
@@ -434,7 +550,7 @@ Availability rule:
 
 - entity is available only if the hub websocket is available and the item still exists in cache
 
-## 11.2 Switch platform
+### 12.2 Switch platform
 
 Implemented in `custom_components/unipi/switch.py`.
 
@@ -449,7 +565,7 @@ Behavior:
 - `async_turn_on()` writes `1`
 - `async_turn_off()` writes `0`
 
-## 11.3 Binary sensor platform
+### 12.3 Binary sensor platform
 
 Implemented in `custom_components/unipi/binary_sensor.py`.
 
@@ -462,9 +578,7 @@ Behavior:
 - read-only
 - `is_on` from truthiness of EVOK value
 
-No device classes are currently inferred.
-
-## 11.4 Light platform
+### 12.4 Light platform
 
 Implemented in `custom_components/unipi/light.py`.
 
@@ -479,7 +593,7 @@ Behavior:
 - `async_turn_on()` writes `1`
 - `async_turn_off()` writes `0`
 
-## 11.5 Sensor platform
+### 12.5 Sensor platform
 
 Implemented in `custom_components/unipi/sensor.py`.
 
@@ -492,9 +606,7 @@ Behavior:
 - `native_value` is the current EVOK value
 - `native_unit_of_measurement` comes from EVOK `unit`
 
-No explicit state class or device class mapping is currently applied.
-
-## 11.6 Number platform
+### 12.6 Number platform
 
 Implemented in `custom_components/unipi/number.py`.
 
@@ -511,30 +623,31 @@ Behavior:
 
 ---
 
-## 12. Event propagation model
+## 13. Event propagation model
 
 The state propagation model is push-first.
 
-### 12.1 Startup path
+### 13.1 Startup path
 
 1. Inventory is fetched from `/rest/all`
-2. Entities are created from normalized cached items
-3. WebSocket starts and later updates cached values
+2. Protocol generation is detected
+3. Entities are created from normalized cached items
+4. WebSocket starts and later updates cached values
 
-### 12.2 Realtime path
+### 13.2 Realtime path
 
 1. EVOK sends WebSocket message
 2. `UniPiHub._handle_websocket_message()` parses JSON
-3. `_ingest_inventory()` normalizes items and updates cache
-4. keys that changed are collected
+3. `_ingest_inventory()` auto-detects protocol generation, normalizes items, and updates cache
+4. changed keys are collected
 5. registered entity listeners are called
 6. entities write new Home Assistant state
 
-### 12.3 Write path
+### 13.3 Write path
 
 1. User acts on entity in HA
 2. entity method calls `hub.async_set_value()`
-3. hub sends EVOK REST POST
+3. hub maps canonical device type to the active protocol's write endpoint and sends EVOK REST POST
 4. response or fallback GET is ingested
 5. state cache updates
 6. listeners are notified
@@ -543,9 +656,9 @@ This means writes flow through the same cache update mechanism as push events.
 
 ---
 
-## 13. Error handling strategy
+## 14. Error handling strategy
 
-### 13.1 Connection-level errors
+### 14.1 Connection-level errors
 
 `UniPiConnectionError` is used as the integration-specific error type.
 
@@ -555,14 +668,14 @@ It is raised on:
 - HTTP timeout errors
 - JSON decode errors
 - invalid discovery payload structure
-- missing `device_info`
+- missing compatible metadata record (`device_info` or `neuron`)
 - websocket readiness timeout
 
-### 13.2 Setup retry strategy
+### 14.2 Setup retry strategy
 
 `async_setup_entry()` converts connection errors into `ConfigEntryNotReady` so Home Assistant can retry later.
 
-### 13.3 WebSocket robustness
+### 14.3 WebSocket robustness
 
 The websocket loop:
 
@@ -571,7 +684,7 @@ The websocket loop:
 - retries until unload
 - respects task cancellation on shutdown
 
-### 13.4 Unsupported payload strategy
+### 14.4 Unsupported payload strategy
 
 Unsupported EVOK types are ignored rather than causing startup failure.
 
@@ -579,9 +692,9 @@ Malformed WebSocket JSON payloads are ignored rather than breaking the loop.
 
 ---
 
-## 14. HACS and branding architecture
+## 15. HACS and branding architecture
 
-### 14.1 HACS compatibility
+### 15.1 HACS compatibility
 
 Current HACS metadata:
 
@@ -589,22 +702,18 @@ Current HACS metadata:
 - integration root contains `manifest.json`
 - only one integration is present under `custom_components/unipi/`
 
-### 14.2 Local brand images
+### 15.2 Local brand images
 
-The integration now uses local custom-integration brand assets in:
+The integration uses local custom-integration brand assets in:
 
 - `custom_components/unipi/brand/icon.png`
 - `custom_components/unipi/brand/logo.png`
 
-The source image was derived from the live UniPi device favicon.
-
-This follows Home Assistant’s custom integration branding approach for 2026.3+.
-
 ---
 
-## 15. Testing architecture
+## 16. Testing architecture
 
-### 15.1 Tooling
+### 16.1 Tooling
 
 Test tooling is defined by:
 
@@ -613,7 +722,7 @@ Test tooling is defined by:
 - `pytest-cov`
 - `pytest-homeassistant-custom-component`
 
-### 15.2 Coverage policy
+### 16.2 Coverage policy
 
 `pytest.ini` enforces:
 
@@ -623,22 +732,24 @@ Test tooling is defined by:
 
 Current achieved coverage is above the target.
 
-### 15.3 Test categories
+### 16.3 Test categories
 
 The suite currently covers:
 
 - model helper behavior
+- protocol detection and normalization for EVOK `3.0.1+` and pre-`3.0.1`
 - hub probing, writes, listeners, websocket processing, and reconnect logic
 - config flow creation, duplicate prevention, and error handling
 - integration setup and unload behavior
 - entity classes and platform setup functions
 - translation and manifest smoke checks
 
-### 15.4 Test strategy
+### 16.4 Test strategy
 
 The runtime design is tested primarily by:
 
 - EVOK payload fixtures
+- separate current-schema and legacy-schema fixtures
 - mocked aiohttp HTTP responses
 - mocked websocket message objects
 - fake hub objects for entity tests
@@ -647,18 +758,18 @@ This keeps tests deterministic and hardware-independent.
 
 ---
 
-## 16. End-to-end architecture
+## 17. End-to-end architecture
 
-A separate local E2E Home Assistant environment was created to validate the real UniPi device.
+A separate local E2E Home Assistant environment was created to validate real UniPi devices.
 
-### 16.1 E2E runtime composition
+### 17.1 E2E runtime composition
 
 - separate venv: `.venv-e2e-ha`
 - dedicated HA config dir: `.e2e-homeassistant`
 - integration symlinked into that config’s `custom_components/`
 - bootstrap helper auto-creates a `unipi` config entry after HA startup
 
-### 16.2 Bootstrap design
+### 17.2 Bootstrap design
 
 The helper integration `unipi_e2e_bootstrap`:
 
@@ -668,21 +779,21 @@ The helper integration `unipi_e2e_bootstrap`:
 4. checks if a matching `unipi` entry already exists
 5. starts the UniPi config flow programmatically if needed
 
-This allowed repeatable manual validation against the live device.
+### 17.3 Live validation outcome
 
-### 16.3 Live validation outcome
+Live validation has confirmed:
 
-The live L203 validation currently results in:
-
-- 1 registered UniPi device
-- 74 registered UniPi entities
-- successful creation of binary sensors, switches, lights, sensors, and number entities
+- successful creation of the current-schema device entry
+- successful probing of a pre-v3 firmware device
+- successful automatic detection of both protocol generations
 
 ---
 
-## 17. Current supported live-device inventory shape
+## 18. Current supported inventory shapes
 
-From the verified live device, the observed EVOK inventory included these types:
+### 18.1 EVOK `3.0.1+`
+
+Observed current-schema EVOK types include:
 
 - `device_info`
 - `di`
@@ -696,7 +807,23 @@ From the verified live device, the observed EVOK inventory included these types:
 - `owpower`
 - `owbus`
 
-The current integration only exposes:
+### 18.2 Pre-v3 firmware
+
+Observed legacy-schema EVOK types include:
+
+- `neuron`
+- `input`
+- `relay`
+- `ai`
+- `ao`
+- `led`
+- `wd`
+- `uart`
+- `owbus`
+
+### 18.3 Exposed entity subset
+
+The integration currently exposes the canonical subset:
 
 - `di`
 - `ro`
@@ -705,42 +832,49 @@ The current integration only exposes:
 - `ao`
 - `led`
 
-This is a deliberate conservative subset.
+Equivalent pre-v3 aliases are supported automatically:
+
+- `input` -> `di`
+- `relay` -> `ro`
+- `output` -> `do`
 
 ---
 
-## 18. Known design tradeoffs and limitations
+## 19. Known design tradeoffs and limitations
 
 1. **No options flow yet**
    - host/port can be configured only at entry creation time
 
 2. **No HTTPS support implemented yet**
-   - architecture leaves room for it, but runtime URLs are currently `http://` and `ws://`
+   - runtime URLs are currently `http://` and `ws://`
 
 3. **No advanced EVOK type coverage yet**
-   - watchdogs, Modbus-related objects, and 1-Wire objects are ignored
+   - watchdogs, Modbus-related objects, 1-Wire objects, and `uart` are ignored
 
-4. **No device class inference yet**
+4. **Legacy support is intentionally scoped**
+   - pre-v3 firmware support currently focuses on metadata, relay/input/output aliases, and legacy analog normalization
+
+5. **No device class inference yet**
    - digital inputs, sensors, and numbers are intentionally conservative
 
-5. **No entity filtering policy yet**
+6. **No entity filtering policy yet**
    - all supported discovered entities are enabled
 
-6. **No websocket filter command used yet**
+7. **No websocket filter command used yet**
    - the implementation currently consumes the full EVOK stream
 
-7. **No dedicated coordinator abstraction**
+8. **No dedicated coordinator abstraction**
    - the hub itself acts as connection manager, discovery cache, and event broker
 
-8. **Description model is generic, not typed per platform**
+9. **Description model is generic, not typed per platform**
    - convenient for rapid implementation, but less explicit than dedicated platform description types
 
-9. **The test suite still emits one non-failing warning**
+10. **The test suite still emits one non-failing warning**
    - coverage and correctness pass, but one async warning remains to be cleaned up
 
 ---
 
-## 19. Recommended future architecture evolution
+## 20. Recommended future architecture evolution
 
 If the integration continues to grow, these are the logical next design steps:
 
@@ -751,7 +885,7 @@ If the integration continues to grow, these are the logical next design steps:
 5. Add device class/state class inference where semantics are clear
 6. Add diagnostics support for easier troubleshooting
 7. Add selective websocket filtering if it reduces traffic safely
-8. Split hub responsibilities if complexity grows:
+8. Split hub responsibilities further if complexity grows:
    - transport client
    - discovery mapper
    - runtime cache / broker
@@ -760,13 +894,14 @@ If the integration continues to grow, these are the logical next design steps:
 
 ---
 
-## 20. File-to-responsibility map
+## 21. File-to-responsibility map
 
 | File | Responsibility |
 |---|---|
 | `custom_components/unipi/__init__.py` | config entry lifecycle |
 | `custom_components/unipi/config_flow.py` | onboarding and duplicate prevention |
 | `custom_components/unipi/const.py` | constants and EVOK-to-platform map |
+| `custom_components/unipi/protocol.py` | EVOK schema detection and compatibility normalization |
 | `custom_components/unipi/models.py` | normalized metadata and entity descriptions |
 | `custom_components/unipi/hub.py` | EVOK discovery, websocket, writes, cache, event dispatch |
 | `custom_components/unipi/entity.py` | shared entity behavior |
@@ -778,12 +913,13 @@ If the integration continues to grow, these are the logical next design steps:
 | `custom_components/unipi/manifest.json` | integration metadata |
 | `custom_components/unipi/brand/` | local integration branding |
 | `tests/` | automated verification |
+| `DEVICE_COMPATIBILITY_PRE_V3_FIRMWARE.md` | local compatibility notes for pre-v3 firmware |
 | `.e2e-homeassistant/` | manual/runtime validation environment |
 | `start_e2e_homeassistant.sh` | local HA runtime bootstrap |
 
 ---
 
-## 21. Summary
+## 22. Summary
 
 The current implementation is a config-entry-based, multi-device-capable, push-oriented Home Assistant custom integration for UniPi controllers over EVOK.
 
@@ -793,10 +929,11 @@ Its core design choices are:
 - REST bootstrap via `/rest/all`
 - permanent WebSocket at `/ws`
 - dynamic entity creation from discovered EVOK inventory
-- conservative type mapping
+- conservative canonical type mapping
+- automatic compatibility normalization for pre-`3.0.1` EVOK devices
 - local push semantics in Home Assistant
 - HACS-compatible repository structure
 - strong automated test coverage
-- working live end-to-end validation against a real device
+- working live validation against both current and legacy EVOK schema devices
 
 This document represents the architectural baseline for the repository going forward.
