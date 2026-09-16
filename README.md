@@ -59,3 +59,7 @@ The implementation uses:
 - `ws://{host}:{port}/ws` for realtime updates
 
 More documentation, tests, and release assets should be added as the integration matures.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
