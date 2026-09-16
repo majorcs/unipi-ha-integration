@@ -1,7 +1,7 @@
 {
   "domain": "unipi_e2e_bootstrap",
   "name": "UniPi E2E Bootstrap",
-  "version": "2026.9.16.1",
+  "version": "2026.9.16.2",
   "documentation": "https://github.com/majorcs/unipi-ha-integration",
   "issue_tracker": "https://github.com/majorcs/unipi-ha-integration/issues",
   "codeowners": ["@majorcs"],

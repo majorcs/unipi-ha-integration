@@ -368,6 +368,16 @@ For legacy devices, canonical writes are translated automatically to legacy endp
 
 This design allows support for both richer and simpler EVOK responses.
 
+#### Version
+
+- `GET /version`
+
+Fetched once, best-effort, during `async_initialize()` via `UniPiHub.async_fetch_version()`. The response is plain text (the EVOK version string), not JSON. Failures are logged at debug level and swallowed rather than blocking setup, since not every EVOK build is guaranteed to expose this route. The result is surfaced as the `EVOK Version` diagnostic sensor (see §12.5).
+
+#### Device web UI link
+
+`device_info["configuration_url"]` (the device page's "Visit" button) intentionally does **not** reuse `UniPiHub.base_url` (which includes the EVOK API port, e.g. `8080`). UniPi devices serve their own browsable web UI on the default HTTP port, while the EVOK port 404s at its root (see `DEVICE_COMPATIBILITY_PRE_V3_FIRMWARE.md`). `UniPiHub.web_ui_url` (`http://{host}`, no port) is used instead, so "Visit" opens the actual device UI rather than a 404.
+
 ### 9.2 WebSocket usage
 
 The implementation uses:
@@ -605,6 +615,14 @@ Behavior:
 
 - `native_value` is the current EVOK value
 - `native_unit_of_measurement` comes from EVOK `unit`
+
+Additionally, the sensor platform creates three static, device-level diagnostic sensors that are not backed by any EVOK circuit item (`UniPiDiagnosticSensorEntity` and its subclasses):
+
+- `IP Address` — the configured EVOK host, always available
+- `EVOK Version` — the EVOK software version, fetched best-effort from `GET /version` during `async_initialize()` (`UniPiHub.async_fetch_version()`); unavailable if the endpoint is missing or the request fails, since some EVOK builds may not expose it
+- `Board Count` — the extension board count parsed from the metadata record; unavailable if EVOK never reported one
+
+These use `EntityCategory.DIAGNOSTIC` and are linked to the device via `hub.device_info`, same as every other entity.
 
 ### 12.6 Number platform
 

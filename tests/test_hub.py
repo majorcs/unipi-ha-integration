@@ -84,6 +84,32 @@ async def test_async_set_value_updates_cached_item(hass, aioclient_mock, sample_
 
 
 @pytest.mark.asyncio
+async def test_async_fetch_version_stores_stripped_text(hass, aioclient_mock) -> None:
+    """A successful /version fetch should store the stripped EVOK version string."""
+    session = async_get_clientsession(hass)
+    hub = UniPiHub(hass, session, "192.168.1.10", 8080)
+
+    aioclient_mock.get("http://192.168.1.10:8080/version", text="v3.2.1\n")
+
+    await hub.async_fetch_version()
+
+    assert hub.evok_version == "v3.2.1"
+
+
+@pytest.mark.asyncio
+async def test_async_fetch_version_swallows_connection_errors(hass, aioclient_mock) -> None:
+    """A failed /version fetch should be swallowed instead of raising."""
+    session = async_get_clientsession(hass)
+    hub = UniPiHub(hass, session, "192.168.1.10", 8080)
+
+    aioclient_mock.get("http://192.168.1.10:8080/version", exc=ClientError("boom"))
+
+    await hub.async_fetch_version()
+
+    assert hub.evok_version is None
+
+
+@pytest.mark.asyncio
 async def test_websocket_message_updates_cache_and_notifies(hass) -> None:
     """Incoming websocket events should update cache and notify listeners."""
     hub = UniPiHub(hass, Mock(), "192.168.1.10", 8080)
@@ -138,6 +164,7 @@ async def test_async_initialize_and_shutdown_manage_websocket_task(hass, sample_
         await hub._stop_event.wait()
 
     hub.async_fetch_inventory = AsyncMock(return_value=sample_inventory)
+    hub.async_fetch_version = AsyncMock()
     hub._websocket_loop = fake_loop
 
     await hub.async_initialize()
@@ -145,7 +172,7 @@ async def test_async_initialize_and_shutdown_manage_websocket_task(hass, sample_
     assert hub.available is True
     assert hub.metadata.model == "L203"
     assert hub.device_identifier == "neuron-l203-167"
-    assert hub.device_info["configuration_url"] == "http://192.168.1.10:8080"
+    assert hub.device_info["configuration_url"] == "http://192.168.1.10"
     assert {item.key for item in hub.get_items_for_platform(Platform.LIGHT)} == {"led:1_01"}
 
     await hub.async_shutdown()
@@ -159,6 +186,7 @@ async def test_async_initialize_times_out_without_websocket_ready(hass, sample_i
     """Initialization should fail if the websocket never signals readiness."""
     hub = UniPiHub(hass, Mock(), "192.168.1.10", 8080)
     hub.async_fetch_inventory = AsyncMock(return_value=sample_inventory)
+    hub.async_fetch_version = AsyncMock()
     hub.async_shutdown = AsyncMock()
 
     async def never_ready() -> None:

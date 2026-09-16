@@ -10,7 +10,13 @@ from custom_components.unipi.light import UniPiLedEntity
 from custom_components.unipi.light import async_setup_entry as light_setup
 from custom_components.unipi.number import UniPiAnalogOutputEntity
 from custom_components.unipi.number import async_setup_entry as number_setup
-from custom_components.unipi.sensor import UniPiSensorEntity
+from custom_components.unipi.sensor import (
+    UniPiBoardCountSensorEntity,
+    UniPiDiagnosticSensorEntity,
+    UniPiEvokVersionSensorEntity,
+    UniPiIpAddressSensorEntity,
+    UniPiSensorEntity,
+)
 from custom_components.unipi.sensor import async_setup_entry as sensor_setup
 from custom_components.unipi.switch import UniPiSwitchEntity
 from custom_components.unipi.switch import async_setup_entry as switch_setup
@@ -71,6 +77,48 @@ def test_binary_sensor_entity_reports_state(fake_hub) -> None:
     assert entity.is_on is True
 
 
+def test_ip_address_sensor_reports_configured_host(fake_hub) -> None:
+    """The IP address sensor should always be available and report the configured host."""
+    entity = UniPiIpAddressSensorEntity(fake_hub, "ip_address", "IP Address")
+
+    assert entity.native_value == fake_hub.host
+    assert entity.available is True
+
+
+def test_evok_version_sensor_reports_fetched_version(fake_hub) -> None:
+    """The EVOK version sensor should report the hub's fetched version when known."""
+    entity = UniPiEvokVersionSensorEntity(fake_hub, "evok_version", "EVOK Version")
+
+    assert entity.native_value == "v3.2.1"
+    assert entity.available is True
+
+
+def test_evok_version_sensor_unavailable_when_not_fetched(fake_hub) -> None:
+    """The EVOK version sensor should be unavailable if the version could not be fetched."""
+    fake_hub.evok_version = None
+    entity = UniPiEvokVersionSensorEntity(fake_hub, "evok_version", "EVOK Version")
+
+    assert entity.native_value is None
+    assert entity.available is False
+
+
+def test_board_count_sensor_reports_metadata_value(fake_hub) -> None:
+    """The board count sensor should report the value parsed from EVOK metadata."""
+    entity = UniPiBoardCountSensorEntity(fake_hub, "board_count", "Board Count")
+
+    assert entity.native_value == fake_hub.metadata.board_count
+    assert entity.available is True
+
+
+def test_board_count_sensor_unavailable_when_unknown(fake_hub) -> None:
+    """The board count sensor should be unavailable if EVOK never reported a board count."""
+    fake_hub.metadata.board_count = None
+    entity = UniPiBoardCountSensorEntity(fake_hub, "board_count", "Board Count")
+
+    assert entity.native_value is None
+    assert entity.available is False
+
+
 def test_sensor_entity_exposes_value_and_unit(fake_hub) -> None:
     """Analog inputs should expose native value and unit."""
     entity = UniPiSensorEntity(fake_hub, fake_hub.get_item("ai:1_01"))
@@ -100,11 +148,20 @@ async def test_platform_setup_functions_add_expected_entities(fake_hub) -> None:
     await sensor_setup(None, entry, add_entities)
     await number_setup(None, entry, add_entities)
 
-    assert len(added) == 6
-    assert {entity.entity_description.platform for entity in added} == {
+    circuit_entities = [entity for entity in added if not isinstance(entity, UniPiDiagnosticSensorEntity)]
+    diagnostic_entities = [entity for entity in added if isinstance(entity, UniPiDiagnosticSensorEntity)]
+
+    assert len(added) == 9
+    assert len(circuit_entities) == 6
+    assert {entity.entity_description.platform for entity in circuit_entities} == {
         Platform.SWITCH,
         Platform.BINARY_SENSOR,
         Platform.LIGHT,
         Platform.SENSOR,
         Platform.NUMBER,
+    }
+    assert {entity.unique_id for entity in diagnostic_entities} == {
+        f"{fake_hub.device_identifier}-ip_address",
+        f"{fake_hub.device_identifier}-evok_version",
+        f"{fake_hub.device_identifier}-board_count",
     }

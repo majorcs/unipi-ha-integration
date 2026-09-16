@@ -63,6 +63,8 @@ class UniPiHub:
         self.port = port
         self.base_url = f"http://{host}:{port}"
         self.websocket_url = f"ws://{host}:{port}/ws"
+        self.web_ui_url = f"http://{host}"
+        self.evok_version: str | None = None
         self._items: dict[str, UniPiEntityDescription] = {}
         self._metadata = UniPiDeviceMetadata()
         self._protocol: EVOKProtocolAdapter = EVOKV3ProtocolAdapter()
@@ -96,7 +98,7 @@ class UniPiHub:
             model=self._metadata.model,
             name=self._metadata.title,
             serial_number=self._metadata.serial_number,
-            configuration_url=self.base_url,
+            configuration_url=self.web_ui_url,
             hw_version=self._metadata.family,
         )
 
@@ -104,6 +106,7 @@ class UniPiHub:
         """Fetch inventory and establish the websocket connection."""
         inventory = await self.async_fetch_inventory()
         self._ingest_inventory(inventory, detect_protocol=True)
+        await self.async_fetch_version()
 
         self._stop_event.clear()
         self._connected_event.clear()
@@ -138,6 +141,20 @@ class UniPiHub:
         if not isinstance(payload, list):
             raise UniPiConnectionError("invalid_inventory")
         return payload
+
+    async def async_fetch_version(self) -> None:
+        """Best-effort fetch of the running EVOK software version.
+
+        Some EVOK builds may not expose this endpoint, so failures are
+        logged and swallowed instead of blocking setup.
+        """
+        try:
+            async with self._session.get(f"{self.base_url}/version", raise_for_status=True) as response:
+                text = await response.text()
+        except (ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Unable to fetch EVOK version for %s: %s", self.host, err)
+            return
+        self.evok_version = text.strip() or None
 
     async def async_set_value(self, dev: str, circuit: str, value: Any) -> None:
         """Write a value to an EVOK endpoint and update local state from the response."""

@@ -159,6 +159,7 @@ class FakeHub:
         self.available = True
         self.host = "127.0.0.1"
         self.port = 8080
+        self.evok_version = "v3.2.1"
         self.metadata = sample_metadata
         self.device_identifier = sample_metadata.unique_id(self.host, self.port)
         self.device_info = DeviceInfo(
