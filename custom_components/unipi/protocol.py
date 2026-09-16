@@ -93,6 +93,10 @@ class EVOKProtocolAdapter:
         if dev == "ao":
             value_range = (DEFAULT_NUMBER_MIN, DEFAULT_NUMBER_MAX)
             raw_item = {**raw_item, "unit": raw_item.get("unit") or "V"}
+        elif dev == "temp":
+            # EVOK's 1-Wire DS18B20/DS18S20 temperature records never include a
+            # "unit" field; these sensors are always Celsius.
+            raw_item = {**raw_item, "unit": raw_item.get("unit") or "°C"}
 
         return UniPiEntityDescription(
             key=f"{dev}:{circuit}",
@@ -210,6 +214,7 @@ def _build_entity_name(dev: str, circuit: str) -> str:
         "led": "LED",
         "ai": "Analog Input",
         "ao": "Analog Output",
+        "temp": "Temperature",
     }
     return f"{labels.get(dev, dev.upper())} {circuit.replace('_', '.')}"
 

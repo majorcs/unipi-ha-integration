@@ -133,6 +133,14 @@ def test_sensor_entity_exposes_value_and_unit(fake_hub) -> None:
     }
 
 
+def test_temp_sensor_entity_defaults_unit_to_celsius(fake_hub) -> None:
+    """1-Wire temperature sensors should default to Celsius since EVOK reports no unit."""
+    entity = UniPiSensorEntity(fake_hub, fake_hub.get_item("temp:28409D1F0000801E"))
+
+    assert entity.native_value == 26.9
+    assert entity.native_unit_of_measurement == "°C"
+
+
 @pytest.mark.asyncio
 async def test_platform_setup_functions_add_expected_entities(fake_hub) -> None:
     """Each platform setup should create entities for its matching EVOK items."""
@@ -151,8 +159,8 @@ async def test_platform_setup_functions_add_expected_entities(fake_hub) -> None:
     circuit_entities = [entity for entity in added if not isinstance(entity, UniPiDiagnosticSensorEntity)]
     diagnostic_entities = [entity for entity in added if isinstance(entity, UniPiDiagnosticSensorEntity)]
 
-    assert len(added) == 9
-    assert len(circuit_entities) == 6
+    assert len(added) == 10
+    assert len(circuit_entities) == 7
     assert {entity.entity_description.platform for entity in circuit_entities} == {
         Platform.SWITCH,
         Platform.BINARY_SENSOR,

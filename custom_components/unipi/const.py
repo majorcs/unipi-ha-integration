@@ -26,6 +26,7 @@ DEVICE_TYPE_TO_PLATFORM: dict[str, Platform] = {
     "led": Platform.LIGHT,
     "ai": Platform.SENSOR,
     "ao": Platform.NUMBER,
+    "temp": Platform.SENSOR,
 }
 
 WRITABLE_DEVICE_TYPES = {"ro", "do", "led", "ao"}

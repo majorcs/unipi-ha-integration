@@ -69,6 +69,13 @@ _SAMPLE_INVENTORY: list[dict[str, Any]] = [
         },
         "unit": "V",
     },
+    {
+        "dev": "temp",
+        "circuit": "28409D1F0000801E",
+        "value": 26.9,
+        "lost": False,
+        "type": "DS18B20",
+    },
 ]
 
 _LEGACY_SAMPLE_INVENTORY: list[dict[str, Any]] = [
@@ -119,6 +126,13 @@ _LEGACY_SAMPLE_INVENTORY: list[dict[str, Any]] = [
         "mode": "Voltage",
         "modes": ["Voltage", "Current", "Resistance"],
         "unit": "V",
+    },
+    {
+        "dev": "temp",
+        "circuit": "28409D1F0000801E",
+        "value": 21.3,
+        "lost": False,
+        "type": "DS18B20",
     },
 ]
 

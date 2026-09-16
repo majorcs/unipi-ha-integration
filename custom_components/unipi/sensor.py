@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DEVICE_TYPE_TO_PLATFORM
 from .entity import UniPiEntity
 from .hub import UniPiHub
 
@@ -27,14 +26,14 @@ async def async_setup_entry(
             UniPiBoardCountSensorEntity(hub, "board_count", "Board Count"),
             *(
                 UniPiSensorEntity(hub, item)
-                for item in hub.get_items_for_platform(DEVICE_TYPE_TO_PLATFORM["ai"])
+                for item in hub.get_items_for_platform(Platform.SENSOR)
             ),
         ]
     )
 
 
 class UniPiSensorEntity(UniPiEntity, SensorEntity):
-    """Representation of a UniPi analog input."""
+    """Representation of a UniPi analog input or 1-Wire temperature sensor."""
 
     @property
     def native_value(self):

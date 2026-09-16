@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from homeassistant.const import Platform
+
 from custom_components.unipi.hub import _metadata_from_raw, _normalize_item
 from custom_components.unipi.protocol import EVOKLegacyProtocolAdapter, EVOKV3ProtocolAdapter, detect_evok_protocol
 
@@ -60,3 +62,26 @@ def test_detect_protocol_defaults_to_v3_for_ambiguous_standalone_ao_item() -> No
     adapter = detect_evok_protocol([{"dev": "ao", "circuit": "1_01", "value": 0.0, "unit": "V"}])
 
     assert isinstance(adapter, EVOKV3ProtocolAdapter)
+
+
+def test_temp_item_normalizes_to_sensor_with_default_celsius_unit(sample_inventory) -> None:
+    """1-Wire 'temp' items should map to Platform.SENSOR and default to Celsius."""
+    temp_item = _normalize_item(next(item for item in sample_inventory if item["dev"] == "temp"))
+
+    assert temp_item is not None
+    assert temp_item.dev == "temp"
+    assert temp_item.platform == Platform.SENSOR
+    assert temp_item.key == "temp:28409D1F0000801E"
+    assert temp_item.value == 26.9
+    assert temp_item.unit == "°C"
+    assert temp_item.writable is False
+
+
+def test_legacy_temp_item_also_normalizes_with_default_celsius_unit(legacy_inventory) -> None:
+    """1-Wire 'temp' items are not protocol-generation-specific; legacy inventories normalize the same way."""
+    temp_item = _normalize_item(next(item for item in legacy_inventory if item["dev"] == "temp"))
+
+    assert temp_item is not None
+    assert temp_item.dev == "temp"
+    assert temp_item.platform == Platform.SENSOR
+    assert temp_item.unit == "°C"

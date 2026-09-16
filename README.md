@@ -38,7 +38,7 @@ This repository contains the initial implementation of a config-entry based inte
 - `ro`, `do` -> `switch`
 - `di` -> `binary_sensor`
 - `led` -> `light`
-- `ai` -> `sensor`
+- `ai`, `temp` (1-Wire DS18B20/DS18S20) -> `sensor`
 - `ao` -> `number`
 
 ## Configuration

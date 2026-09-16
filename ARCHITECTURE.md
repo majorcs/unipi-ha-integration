@@ -494,6 +494,9 @@ Current mapping from canonical EVOK type to Home Assistant platform:
 | `led` | LED | `light` |
 | `ai` | analog input | `sensor` |
 | `ao` | analog output | `number` |
+| `temp` | 1-Wire DS18B20/DS18S20 temperature sensor | `sensor` |
+
+`temp` items share the `sensor` platform with `ai` items via `UniPiSensorEntity`; EVOK never sends a `unit` field for `temp` records, so the normalizer defaults it to `°C`.
 
 Legacy EVOK aliases are also accepted automatically:
 
@@ -511,8 +514,9 @@ Observed unsupported EVOK types include:
 
 - `wd`
 - `modbus_slave`
-- `owpower`
-- `owbus`
+- `owpower` — 1-Wire bus power/reset control
+- `owbus` — the 1-Wire bus controller itself
+- `1wdevice` — DS2438 (combined humidity/voltage/temperature) and DS2408/DS2406/DS2413 (1-Wire GPIO expanders); unlike `temp`, these bundle multiple sub-values or per-pin state into one record and would need dedicated normalization, not just a platform mapping
 - `uart`
 - metadata records (`device_info` and `neuron`) which are handled separately
 
@@ -526,6 +530,7 @@ Examples:
 - `Digital Input 3.04`
 - `LED 1.03`
 - `Analog Output 1.01`
+- `Temperature 28409D1F0000801E` (1-Wire circuits are addressed by their 1-Wire address, not a board circuit number)
 
 ### 11.4 Unique entity ID strategy
 
@@ -610,11 +615,12 @@ Implemented in `custom_components/unipi/sensor.py`.
 Used for:
 
 - `ai`
+- `temp` (1-Wire DS18B20/DS18S20)
 
 Behavior:
 
 - `native_value` is the current EVOK value
-- `native_unit_of_measurement` comes from EVOK `unit`
+- `native_unit_of_measurement` comes from EVOK `unit` (defaulted to `°C` for `temp`, which EVOK never reports a unit for)
 
 Additionally, the sensor platform creates three static, device-level diagnostic sensors that are not backed by any EVOK circuit item (`UniPiDiagnosticSensorEntity` and its subclasses):
 
@@ -849,6 +855,7 @@ The integration currently exposes the canonical subset:
 - `ai`
 - `ao`
 - `led`
+- `temp`
 
 Equivalent pre-v3 aliases are supported automatically:
 
@@ -867,7 +874,7 @@ Equivalent pre-v3 aliases are supported automatically:
    - runtime URLs are currently `http://` and `ws://`
 
 3. **No advanced EVOK type coverage yet**
-   - watchdogs, Modbus-related objects, 1-Wire objects, and `uart` are ignored
+   - watchdogs, Modbus-related objects, the 1-Wire bus/power control (`owbus`, `owpower`) and multi-value/multi-pin 1-Wire devices (`1wdevice`: DS2438, DS2408/DS2406/DS2413), and `uart` are ignored. 1-Wire temperature sensors (`temp`) are supported.
 
 4. **Legacy support is intentionally scoped**
    - pre-v3 firmware support currently focuses on metadata, relay/input/output aliases, and legacy analog normalization
